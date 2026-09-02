@@ -1,0 +1,80 @@
+# 论文仅明确使用 SAC、MINE、单条专家示范、Sinkhorn 匹配及约 2000 轮训练。
+# 其余数值均为本项目为可运行复现而提供的显式默认值。
+seed: 0
+device: auto
+
+paths:
+  scene_xml: ../SAC_ur5e/universal_robots_ur5e/scene.xml
+  expert_dir: ../SAC_ur5e/data/similar_expert
+  output_dir: outputs/ur5e_pick_place
+
+environment:
+  max_episode_steps: 500
+  frame_skip: 10
+  kinematic_control: true
+  max_ee_step: 0.03
+  ik_iterations: 30
+  ik_damping: 0.05
+  grasp_radius: 0.015
+  grasp_command_threshold: 0.2
+  release_command_threshold: -0.2
+  cup_tcp_offset: [0.0, 0.0, 0.105]
+  blue_mat_center: [0.45, 0.35]
+  success_radius: 0.06
+  success_z_max: 0.14
+  minimum_lift_height: 0.20
+  workspace_low: [-0.70, -0.60, 0.12]
+  workspace_high: [0.70, 0.60, 0.90]
+  initial_joint_noise: 0.0
+  initial_cup_xy_noise: 0.0
+
+network:
+  hidden_dims: [256, 256]
+  mine_hidden_dims: [128, 128]
+  activation: relu
+
+tgod:
+  num_skills: 8
+  mine_learning_rate: 0.0001
+  state_mi_weight: 1.0
+  demonstration_mi_weight: 1.0
+  # 单条固定 D 时 I(Z;D) 理论上退化；该通用示范核先验为未公开细节的工程补全。
+  # 设为 0 可关闭，得到仅按论文公式字面实现的两个 MINE 分数。
+  demonstration_support_weight: 1.0
+  pseudo_reward_clip: 10.0
+  reward_normalization: true
+  mine_gradient_clip: 10.0
+
+sac:
+  learning_rate: 0.0003
+  alpha_learning_rate: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  batch_size: 256
+  replay_size: 200000
+  random_steps: 1000
+  update_after: 1000
+  update_every: 1
+  gradient_steps: 1
+  bootstrap_on_timeout: false
+  target_entropy: auto
+  gradient_clip: 10.0
+
+training:
+  episodes: 2000
+  log_every_episodes: 10
+  checkpoint_every_episodes: 100
+  match_after_training: true
+
+matching:
+  candidate_count: 50
+  deterministic_policy: false
+  prefer_successful: false
+  resample_points: 100
+  epsilon: 0.05
+  max_iterations: 500
+  tolerance: 1.0e-6
+  qpos_weight: 1.0
+  tcp_weight: 2.0
+  cup_weight: 2.0
+  time_weight: 0.25

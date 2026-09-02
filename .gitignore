@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# 训练输出
+outputs/
+outputs_*/
+logs/
+runs/
+*.log
+
+# 模型
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# 临时文件
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
