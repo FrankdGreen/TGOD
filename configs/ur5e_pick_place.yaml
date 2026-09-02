@@ -4,8 +4,8 @@ seed: 0
 device: auto
 
 paths:
-  scene_xml: ../SAC_ur5e/universal_robots_ur5e/scene.xml
-  expert_dir: ../SAC_ur5e/data/similar_expert
+  scene_xml: universal_robots_ur5e/scene.xml
+  expert_dir: data/similar_expert
   output_dir: outputs/ur5e_pick_place
 
 environment:
