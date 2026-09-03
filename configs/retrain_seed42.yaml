@@ -1,0 +1,84 @@
+# 第二次独立训练配置：降低无约束探索，增强对单条专家示范的跟随。
+# 这是针对首次训练轨迹过度抬升、动作饱和及成功率低的工程调参。
+seed: 42
+device: auto
+
+paths:
+  scene_xml: universal_robots_ur5e/scene.xml
+  expert_dir: data/similar_expert
+  output_dir: outputs/retrain_seed42
+
+environment:
+  max_episode_steps: 500
+  frame_skip: 10
+  kinematic_control: true
+  # 首次训练为 0.03；减半以获得更平滑的末端运动。
+  max_ee_step: 0.015
+  ik_iterations: 30
+  ik_damping: 0.05
+  grasp_radius: 0.015
+  grasp_command_threshold: 0.2
+  release_command_threshold: -0.2
+  cup_tcp_offset: [0.0, 0.0, 0.105]
+  blue_mat_center: [0.45, 0.35]
+  success_radius: 0.06
+  success_z_max: 0.14
+  minimum_lift_height: 0.20
+  workspace_low: [-0.70, -0.60, 0.12]
+  workspace_high: [0.70, 0.60, 0.90]
+  initial_joint_noise: 0.0
+  initial_cup_xy_noise: 0.0
+
+network:
+  hidden_dims: [256, 256]
+  mine_hidden_dims: [128, 128]
+  activation: relu
+
+tgod:
+  num_skills: 8
+  # 降低 MINE 学习率，缓解首次训练中示范互信息估计的大幅波动。
+  mine_learning_rate: 0.00005
+  # 减少状态多样性驱动，避免机械臂为了区分技能而远离专家轨迹。
+  state_mi_weight: 0.25
+  demonstration_mi_weight: 1.0
+  # 加强按时间对齐的专家轨迹邻近先验。
+  demonstration_support_weight: 3.0
+  pseudo_reward_clip: 10.0
+  reward_normalization: true
+  mine_gradient_clip: 10.0
+
+sac:
+  learning_rate: 0.0003
+  alpha_learning_rate: 0.0003
+  gamma: 0.99
+  tau: 0.005
+  batch_size: 256
+  replay_size: 200000
+  random_steps: 1000
+  update_after: 1000
+  update_every: 1
+  gradient_steps: 1
+  bootstrap_on_timeout: false
+  target_entropy: auto
+  gradient_clip: 10.0
+
+training:
+  episodes: 800
+  log_every_episodes: 10
+  checkpoint_every_episodes: 100
+  # 先训练再单独评估，避免训练结束时自动覆盖评估结果。
+  match_after_training: false
+
+matching:
+  candidate_count: 100
+  # 保留策略采样以生成多样候选；固定 seed 仍能复现实验。
+  deterministic_policy: false
+  prefer_successful: true
+  resample_points: 100
+  epsilon: 0.05
+  max_iterations: 500
+  tolerance: 1.0e-6
+  qpos_weight: 1.0
+  tcp_weight: 2.0
+  cup_weight: 2.0
+  time_weight: 0.25

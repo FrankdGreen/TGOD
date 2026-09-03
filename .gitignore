@@ -31,3 +31,5 @@ checkpoints/
 *.bak
 .DS_Store
 Thumbs.db
+
+selected_trajectory.npz

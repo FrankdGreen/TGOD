@@ -14,6 +14,7 @@ DEFAULT_CONFIG = Path(__file__).resolve().parent / "configs" / "ur5e_pick_place.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train TGOD-SD on the UR5e white-cup pick-and-place task.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="YAML configuration file.")
+    parser.add_argument("--seed", type=int, help="Override the experiment random seed.")
     parser.add_argument("--episodes", type=int, help="Override training.episodes.")
     parser.add_argument("--candidate-count", type=int, help="Override matching.candidate_count.")
     parser.add_argument("--device", help="Override device (auto/cpu/cuda/cuda:0).")
@@ -26,6 +27,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     overrides: dict[str, Any] = {}
+    if args.seed is not None:
+        overrides["seed"] = args.seed
     if args.episodes is not None:
         overrides.setdefault("training", {})["episodes"] = args.episodes
     if args.candidate_count is not None:

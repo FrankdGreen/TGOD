@@ -16,12 +16,44 @@ DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "ur5e_pick_place.yaml"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Replay a selected TGOD-SD q-pos trajectory in MuJoCo.")
-    parser.add_argument("trajectory", help="selected_trajectory.npz or another candidate NPZ.")
+    parser = argparse.ArgumentParser(
+        description="Animate a selected TGOD-SD q-pos trajectory in the MuJoCo viewer."
+    )
+    parser.add_argument(
+        "trajectory",
+        nargs="?",
+        default=str(PROJECT_ROOT / "selected_trajectory.npz"),
+        help="Trajectory NPZ (default: ./selected_trajectory.npz).",
+    )
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
-    parser.add_argument("--render", action="store_true")
-    parser.add_argument("--realtime", action="store_true")
-    parser.add_argument("--stride", type=int, default=1)
+    parser.set_defaults(render=True, realtime=True)
+    parser.add_argument("--render", dest="render", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--headless",
+        dest="render",
+        action="store_false",
+        help="Run the replay check without opening the MuJoCo viewer.",
+    )
+    parser.add_argument("--realtime", dest="realtime", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--no-realtime",
+        dest="realtime",
+        action="store_false",
+        help="Do not delay between frames.",
+    )
+    parser.add_argument("--stride", type=int, default=1, help="Display every Nth trajectory frame.")
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Playback speed multiplier (default: 1.0).",
+    )
+    parser.add_argument(
+        "--hold-seconds",
+        type=float,
+        default=2.0,
+        help="Keep the final pose visible for this many seconds (default: 2).",
+    )
     return parser.parse_args()
 
 
@@ -29,6 +61,10 @@ def main() -> None:
     args = parse_args()
     if args.stride <= 0:
         raise ValueError("--stride must be positive")
+    if args.speed <= 0:
+        raise ValueError("--speed must be positive")
+    if args.hold_seconds < 0:
+        raise ValueError("--hold-seconds cannot be negative")
     config = load_config(args.config)
     scene = resolve_input_path(config["paths"]["scene_xml"], kind="scene")
     expert_directory = resolve_input_path(config["paths"]["expert_dir"], kind="expert")
@@ -60,13 +96,19 @@ def main() -> None:
         frame_indices.append(len(qpos) - 1)
     replayed = 0
     try:
-        for index in frame_indices:
+        for frame_number, index in enumerate(frame_indices):
             env.set_replay_state(qpos[index], cup_positions[index])
             if args.render:
                 env.render()
-            if args.realtime:
-                time.sleep(float(env.model.opt.timestep) * env.frame_skip * args.stride)
             replayed += 1
+            if args.realtime and frame_number + 1 < len(frame_indices):
+                next_index = frame_indices[frame_number + 1]
+                simulated_seconds = (
+                    float(env.model.opt.timestep) * env.frame_skip * (next_index - index)
+                )
+                time.sleep(simulated_seconds / args.speed)
+        if args.render and args.hold_seconds > 0:
+            time.sleep(args.hold_seconds)
     finally:
         env.close()
     goal = np.asarray([*expert.blue_mat_center, expert.cup_initial_position[2]], dtype=np.float32)
