@@ -94,6 +94,7 @@ class TGODSACAgent:
         self.state_mi_weight = float(tgod_config["state_mi_weight"])
         self.demonstration_mi_weight = float(tgod_config["demonstration_mi_weight"])
         self.demonstration_support_weight = float(tgod_config["demonstration_support_weight"])
+        self.demonstration_progress_weight = float(tgod_config["demonstration_progress_weight"])
         self.pseudo_reward_clip = float(tgod_config["pseudo_reward_clip"])
         self.reward_normalization = bool(tgod_config["reward_normalization"])
         self.mine_gradient_clip = float(tgod_config["mine_gradient_clip"])
@@ -125,6 +126,7 @@ class TGODSACAgent:
         action = self._tensor(batch["action"])
         skill = self._tensor(batch["skill"])
         relation = self._tensor(batch["relation"])
+        next_relation = self._tensor(batch["next_relation"])
         terminal = self._tensor(batch["terminal"])
 
         state_bound, _, _ = self.state_mine.dv_bound(observation, skill)
@@ -143,11 +145,23 @@ class TGODSACAgent:
                 min=1e-6,
                 max=1.0,
             )
+            next_demonstration_support = torch.clamp(
+                next_relation[:, RELATION_PROXIMITY_INDEX : RELATION_PROXIMITY_INDEX + 1],
+                min=1e-6,
+                max=1.0,
+            )
             support_reward = self.demonstration_support_weight * torch.log(demonstration_support)
+            # Potential-based dense guidance: reward actions that move the next
+            # state closer to the time-aligned expert state and penalize regress.
+            progress_reward = self.demonstration_progress_weight * (
+                self.gamma * torch.log(next_demonstration_support)
+                - torch.log(demonstration_support)
+            )
             raw_reward = (
                 self.state_mi_weight * self.state_mine.pointwise_reward(observation, skill)
                 + self.demonstration_mi_weight * self.demo_mine.pointwise_reward(relation, skill)
                 + support_reward
+                + progress_reward
             )
             if self.reward_normalization:
                 self.reward_moments.update(raw_reward)
@@ -203,6 +217,7 @@ class TGODSACAgent:
             "pseudo_reward_raw_mean": float(raw_reward.mean().item()),
             "pseudo_reward_mean": float(pseudo_reward.mean().item()),
             "demonstration_support_mean": float(demonstration_support.mean().item()),
+            "demonstration_progress_reward_mean": float(progress_reward.mean().item()),
             "q_loss": float(q_loss.item()),
             "actor_loss": float(actor_loss.item()),
             "alpha_loss": float(alpha_loss.item()),

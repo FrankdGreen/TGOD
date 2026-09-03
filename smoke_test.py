@@ -44,16 +44,21 @@ def main() -> None:
     next_observations = np.repeat(next_observation[None, :], batch_size, axis=0)
     skills = np.stack([one_hot_skill(index % agent.skill_dim, agent.skill_dim) for index in range(batch_size)])
     relations = []
+    next_relations = []
     for index in range(batch_size):
         progress = index / (batch_size - 1)
         observations[index, -1] = progress
         relations.append(expert.relation_feature(observations[index], progress))
+        next_progress = min(progress + 1.0 / config["environment"]["max_episode_steps"], 1.0)
+        next_observations[index, -1] = next_progress
+        next_relations.append(expert.relation_feature(next_observations[index], next_progress))
     batch = {
         "observation": observations.astype(np.float32),
         "action": rng.uniform(-1.0, 1.0, size=(batch_size, 4)).astype(np.float32),
         "next_observation": next_observations.astype(np.float32),
         "skill": skills.astype(np.float32),
         "relation": np.asarray(relations, dtype=np.float32),
+        "next_relation": np.asarray(next_relations, dtype=np.float32),
         "terminal": np.zeros((batch_size, 1), dtype=np.float32),
     }
     metrics = agent.update(batch)

@@ -156,6 +156,9 @@ def train(config: dict[str, Any], resume_path: str | Path | None = None) -> Path
                     action = agent.act(observation, skill, deterministic=False)
                 relation = expert.relation_feature(observation, float(observation[-1]))
                 next_observation, environment_reward, terminated, truncated, info = env.step(action)
+                next_relation = expert.relation_feature(
+                    next_observation, float(next_observation[-1])
+                )
                 if environment_reward != 0.0:
                     raise RuntimeError("TGOD environment reward must remain zero; MINE supplies the pseudo-reward.")
                 replay_terminal = bool(
@@ -168,6 +171,7 @@ def train(config: dict[str, Any], resume_path: str | Path | None = None) -> Path
                     next_observation,
                     skill,
                     relation,
+                    next_relation,
                     terminal=replay_terminal,
                 )
                 observation = next_observation

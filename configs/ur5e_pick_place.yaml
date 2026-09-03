@@ -18,6 +18,9 @@ environment:
   grasp_radius: 0.015
   grasp_command_threshold: 0.2
   release_command_threshold: -0.2
+  grasp_confirm_steps: 3
+  release_confirm_steps: 3
+  regrasp_cooldown_steps: 10
   cup_tcp_offset: [0.0, 0.0, 0.105]
   blue_mat_center: [0.45, 0.35]
   success_radius: 0.06
@@ -41,6 +44,7 @@ tgod:
   # 单条固定 D 时 I(Z;D) 理论上退化；该通用示范核先验为未公开细节的工程补全。
   # 设为 0 可关闭，得到仅按论文公式字面实现的两个 MINE 分数。
   demonstration_support_weight: 1.0
+  demonstration_progress_weight: 0.0
   pseudo_reward_clip: 10.0
   reward_normalization: true
   mine_gradient_clip: 10.0

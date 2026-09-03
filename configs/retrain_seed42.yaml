@@ -19,6 +19,10 @@ environment:
   grasp_radius: 0.015
   grasp_command_threshold: 0.2
   release_command_threshold: -0.2
+  # 连续确认和释放冷却抑制随机策略造成的夹爪开合抖动。
+  grasp_confirm_steps: 3
+  release_confirm_steps: 3
+  regrasp_cooldown_steps: 10
   cup_tcp_offset: [0.0, 0.0, 0.105]
   blue_mat_center: [0.45, 0.35]
   success_radius: 0.06
@@ -39,10 +43,12 @@ tgod:
   # 降低 MINE 学习率，缓解首次训练中示范互信息估计的大幅波动。
   mine_learning_rate: 0.00005
   # 减少状态多样性驱动，避免机械臂为了区分技能而远离专家轨迹。
-  state_mi_weight: 0.25
-  demonstration_mi_weight: 1.0
+  state_mi_weight: 0.05
+  demonstration_mi_weight: 0.25
   # 加强按时间对齐的专家轨迹邻近先验。
-  demonstration_support_weight: 3.0
+  demonstration_support_weight: 10.0
+  # 奖励下一状态相对当前状态更接近按时间对齐的专家轨迹。
+  demonstration_progress_weight: 5.0
   pseudo_reward_clip: 10.0
   reward_normalization: true
   mine_gradient_clip: 10.0

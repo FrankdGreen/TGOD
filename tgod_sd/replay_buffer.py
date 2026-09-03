@@ -23,6 +23,7 @@ class ReplayBuffer:
         self.next_observations = np.empty((capacity, observation_dim), dtype=np.float32)
         self.skills = np.empty((capacity, skill_dim), dtype=np.float32)
         self.relations = np.empty((capacity, relation_dim), dtype=np.float32)
+        self.next_relations = np.empty((capacity, relation_dim), dtype=np.float32)
         self.terminals = np.empty((capacity, 1), dtype=np.float32)
         self._index = 0
         self._size = 0
@@ -38,6 +39,7 @@ class ReplayBuffer:
         next_observation: np.ndarray,
         skill: np.ndarray,
         relation: np.ndarray,
+        next_relation: np.ndarray,
         terminal: bool,
     ) -> None:
         index = self._index
@@ -46,6 +48,7 @@ class ReplayBuffer:
         self.next_observations[index] = next_observation
         self.skills[index] = skill
         self.relations[index] = relation
+        self.next_relations[index] = next_relation
         self.terminals[index, 0] = float(terminal)
         self._index = (index + 1) % self.capacity
         self._size = min(self._size + 1, self.capacity)
@@ -60,6 +63,7 @@ class ReplayBuffer:
             "next_observation": self.next_observations[indices],
             "skill": self.skills[indices],
             "relation": self.relations[indices],
+            "next_relation": self.next_relations[indices],
             "terminal": self.terminals[indices],
         }
 

@@ -75,6 +75,9 @@ class UR5ePickPlaceEnv(gym.Env):
         self.grasp_radius = float(config["grasp_radius"])
         self.grasp_command_threshold = float(config["grasp_command_threshold"])
         self.release_command_threshold = float(config["release_command_threshold"])
+        self.grasp_confirm_steps = int(config["grasp_confirm_steps"])
+        self.release_confirm_steps = int(config["release_confirm_steps"])
+        self.regrasp_cooldown_steps = int(config["regrasp_cooldown_steps"])
         self.cup_tcp_offset = np.asarray(config["cup_tcp_offset"], dtype=np.float64)
         self.blue_mat_center = np.asarray(config["blue_mat_center"], dtype=np.float64)
         self.success_radius = float(config["success_radius"])
@@ -110,6 +113,9 @@ class UR5ePickPlaceEnv(gym.Env):
         self._placed = False
         self._ever_grasped = False
         self._cup_lifted = False
+        self._grasp_command_streak = 0
+        self._release_command_streak = 0
+        self._regrasp_cooldown = 0
 
     @staticmethod
     def _load_model_unicode_safe(xml_path: Path) -> mujoco.MjModel:
@@ -244,6 +250,9 @@ class UR5ePickPlaceEnv(gym.Env):
         self._placed = False
         self._ever_grasped = False
         self._cup_lifted = False
+        self._grasp_command_streak = 0
+        self._release_command_streak = 0
+        self._regrasp_cooldown = 0
         mujoco.mj_forward(self.model, self.data)
         info = self._info(contact=False, collision=False, joint_target=self.data.qpos[:6])
         return self._observation(), info
@@ -257,6 +266,7 @@ class UR5ePickPlaceEnv(gym.Env):
             "placed": bool(self._placed),
             "ever_grasped": bool(self._ever_grasped),
             "cup_lifted": bool(self._cup_lifted),
+            "regrasp_cooldown": int(self._regrasp_cooldown),
             "contact": bool(contact),
             "collision": bool(collision),
             "step": int(self._step_count),
@@ -292,11 +302,29 @@ class UR5ePickPlaceEnv(gym.Env):
             self._actual_cup_wrist_contact()
             or np.linalg.norm(self._get_ee_pos() - self._cup_anchor()) <= self.grasp_radius
         )
-        if self._grasped and action[3] < self.release_command_threshold:
-            self._grasped = False
-        elif not self._grasped and action[3] > self.grasp_command_threshold and contact:
-            self._grasped = True
-            self._ever_grasped = True
+        if self._grasped:
+            self._grasp_command_streak = 0
+            if action[3] < self.release_command_threshold:
+                self._release_command_streak += 1
+            else:
+                self._release_command_streak = 0
+            if self._release_command_streak >= self.release_confirm_steps:
+                self._grasped = False
+                self._release_command_streak = 0
+                self._regrasp_cooldown = self.regrasp_cooldown_steps
+        else:
+            self._release_command_streak = 0
+            if self._regrasp_cooldown > 0:
+                self._regrasp_cooldown -= 1
+                self._grasp_command_streak = 0
+            elif action[3] > self.grasp_command_threshold and contact:
+                self._grasp_command_streak += 1
+            else:
+                self._grasp_command_streak = 0
+            if self._grasp_command_streak >= self.grasp_confirm_steps:
+                self._grasped = True
+                self._ever_grasped = True
+                self._grasp_command_streak = 0
         if self._grasped:
             self._attach_cup()
             if self._get_cup_pos()[2] >= self.minimum_lift_height:
