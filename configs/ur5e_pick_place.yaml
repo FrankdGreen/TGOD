@@ -67,7 +67,7 @@ sac:
 training:
   episodes: 2000
   log_every_episodes: 10
-  checkpoint_every_episodes: 100
+  checkpoint_every_episodes: 10
   match_after_training: true
 
 matching:
