@@ -21,8 +21,8 @@ environment:
   release_command_threshold: -0.2
   # 连续确认和释放冷却抑制随机策略造成的夹爪开合抖动。
   grasp_confirm_steps: 3
-  release_confirm_steps: 3
-  regrasp_cooldown_steps: 10
+  release_confirm_steps: 2
+  regrasp_cooldown_steps: 20
   cup_tcp_offset: [0.0, 0.0, 0.105]
   blue_mat_center: [0.45, 0.35]
   success_radius: 0.06
@@ -49,6 +49,11 @@ tgod:
   demonstration_support_weight: 10.0
   # 奖励下一状态相对当前状态更接近按时间对齐的专家轨迹。
   demonstration_progress_weight: 5.0
+  # 工程扩展：由专家杯子开始运动/到达目标的时刻推导夹爪开合阶段。
+  # 设为 0 可关闭该项，回到不包含夹爪监督的TGOD-SD消融设置。
+  gripper_imitation_weight: 2.0
+  gripper_close_progress: 0.16
+  gripper_release_progress: 0.74
   pseudo_reward_clip: 10.0
   reward_normalization: true
   mine_gradient_clip: 10.0
@@ -71,7 +76,9 @@ sac:
 training:
   episodes: 800
   log_every_episodes: 10
-  checkpoint_every_episodes: 100
+  checkpoint_every_episodes: 10
+  # 续训时奖励组成已变化，不能沿用旧checkpoint累计的归一化统计。
+  reset_reward_statistics_on_resume: true
   # 先训练再单独评估，避免训练结束时自动覆盖评估结果。
   match_after_training: false
 
@@ -81,9 +88,9 @@ matching:
   deterministic_policy: false
   prefer_successful: true
   resample_points: 100
-  epsilon: 0.05
-  max_iterations: 500
-  tolerance: 1.0e-6
+  epsilon: 0.10
+  max_iterations: 2000
+  tolerance: 1.0e-5
   qpos_weight: 1.0
   tcp_weight: 2.0
   cup_weight: 2.0

@@ -178,6 +178,13 @@ def generate_and_match(
     candidates_directory.mkdir(parents=True, exist_ok=True)
     candidate_count = int(matching_config["candidate_count"])
     deterministic = bool(matching_config["deterministic_policy"])
+    requested_skill = matching_config.get("skill_index")
+    if requested_skill is not None:
+        requested_skill = int(requested_skill)
+        if not 0 <= requested_skill < agent.skill_dim:
+            raise ValueError(
+                f"Requested skill {requested_skill} is outside [0, {agent.skill_dim})."
+            )
     candidate_seed = int(seed + 1_000_000)
     random.seed(candidate_seed)
     np.random.seed(candidate_seed)
@@ -192,7 +199,7 @@ def generate_and_match(
         candidate = rollout_candidate(
             env,
             agent,
-            skill_index=index % agent.skill_dim,
+            skill_index=requested_skill if requested_skill is not None else index % agent.skill_dim,
             seed=seed + 10_000 + index,
             deterministic=deterministic,
         )
@@ -245,6 +252,7 @@ def generate_and_match(
         "selected_success": candidates[selected_index].success,
         "prefer_successful": bool(matching_config["prefer_successful"]),
         "candidate_generation_seed": candidate_seed,
+        "requested_skill_index": requested_skill,
         "filtered_to_successful_candidates": filtered_to_success,
         "candidates": records,
     }

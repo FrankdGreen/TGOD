@@ -140,6 +140,7 @@ def validate_config(config: Mapping[str, Any]) -> None:
         "tgod.demonstration_mi_weight": config["tgod"]["demonstration_mi_weight"],
         "tgod.demonstration_support_weight": config["tgod"]["demonstration_support_weight"],
         "tgod.demonstration_progress_weight": config["tgod"]["demonstration_progress_weight"],
+        "tgod.gripper_imitation_weight": config["tgod"]["gripper_imitation_weight"],
         "matching.qpos_weight": config["matching"]["qpos_weight"],
         "matching.tcp_weight": config["matching"]["tcp_weight"],
         "matching.cup_weight": config["matching"]["cup_weight"],
@@ -150,6 +151,20 @@ def validate_config(config: Mapping[str, Any]) -> None:
     ]
     if invalid_nonnegative:
         raise ValueError(f"Configuration values cannot be negative: {invalid_nonnegative}")
+    close_progress = float(config["tgod"]["gripper_close_progress"])
+    release_progress = float(config["tgod"]["gripper_release_progress"])
+    if not 0.0 <= close_progress < release_progress <= 1.0:
+        raise ValueError(
+            "tgod gripper progress must satisfy 0 <= gripper_close_progress "
+            "< gripper_release_progress <= 1."
+        )
+    requested_skill = config["matching"].get("skill_index")
+    if requested_skill is not None and (
+        isinstance(requested_skill, bool)
+        or not float(requested_skill).is_integer()
+        or not 0 <= int(requested_skill) < int(config["tgod"]["num_skills"])
+    ):
+        raise ValueError("matching.skill_index must identify a configured TGOD skill.")
     if not any(float(config["matching"][name]) > 0 for name in ("qpos_weight", "tcp_weight", "cup_weight", "time_weight")):
         raise ValueError("At least one matching feature weight must be positive.")
     for name in ("hidden_dims", "mine_hidden_dims"):

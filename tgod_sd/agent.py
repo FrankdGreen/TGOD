@@ -95,6 +95,11 @@ class TGODSACAgent:
         self.demonstration_mi_weight = float(tgod_config["demonstration_mi_weight"])
         self.demonstration_support_weight = float(tgod_config["demonstration_support_weight"])
         self.demonstration_progress_weight = float(tgod_config["demonstration_progress_weight"])
+        # Optional demonstration-derived engineering extension. A zero weight
+        # preserves the TGOD-SD pseudo-reward without gripper phase guidance.
+        self.gripper_imitation_weight = float(tgod_config["gripper_imitation_weight"])
+        self.gripper_close_progress = float(tgod_config["gripper_close_progress"])
+        self.gripper_release_progress = float(tgod_config["gripper_release_progress"])
         self.pseudo_reward_clip = float(tgod_config["pseudo_reward_clip"])
         self.reward_normalization = bool(tgod_config["reward_normalization"])
         self.mine_gradient_clip = float(tgod_config["mine_gradient_clip"])
@@ -106,6 +111,10 @@ class TGODSACAgent:
     @property
     def alpha(self) -> torch.Tensor:
         return self.log_alpha.exp()
+
+    def reset_reward_statistics(self) -> None:
+        """Reset normalization after the configured intrinsic reward changes."""
+        self.reward_moments = RunningMoments()
 
     def _tensor(self, values: np.ndarray) -> torch.Tensor:
         return torch.as_tensor(values, dtype=torch.float32, device=self.device)
@@ -157,11 +166,24 @@ class TGODSACAgent:
                 self.gamma * torch.log(next_demonstration_support)
                 - torch.log(demonstration_support)
             )
+            progress = observation[:, -1:]
+            should_grasp = (progress >= self.gripper_close_progress) & (
+                progress < self.gripper_release_progress
+            )
+            expert_gripper_action = torch.where(
+                should_grasp,
+                torch.ones_like(progress),
+                -torch.ones_like(progress),
+            )
+            gripper_imitation_reward = -self.gripper_imitation_weight * torch.square(
+                action[:, 3:4] - expert_gripper_action
+            )
             raw_reward = (
                 self.state_mi_weight * self.state_mine.pointwise_reward(observation, skill)
                 + self.demonstration_mi_weight * self.demo_mine.pointwise_reward(relation, skill)
                 + support_reward
                 + progress_reward
+                + gripper_imitation_reward
             )
             if self.reward_normalization:
                 self.reward_moments.update(raw_reward)
@@ -218,6 +240,7 @@ class TGODSACAgent:
             "pseudo_reward_mean": float(pseudo_reward.mean().item()),
             "demonstration_support_mean": float(demonstration_support.mean().item()),
             "demonstration_progress_reward_mean": float(progress_reward.mean().item()),
+            "gripper_imitation_reward_mean": float(gripper_imitation_reward.mean().item()),
             "q_loss": float(q_loss.item()),
             "actor_loss": float(actor_loss.item()),
             "alpha_loss": float(alpha_loss.item()),

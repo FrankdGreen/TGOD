@@ -108,6 +108,9 @@ def train(config: dict[str, Any], resume_path: str | Path | None = None) -> Path
     global_step = 0
     if resume_path is not None:
         checkpoint = load_checkpoint(resume_path, agent, load_optimizers=True)
+        if bool(training_config.get("reset_reward_statistics_on_resume", False)):
+            agent.reset_reward_statistics()
+            print("Reset pseudo-reward normalization statistics for the new reward configuration.")
         start_episode = int(checkpoint["episode"])
         global_step = int(checkpoint["global_step"])
         if "numpy_rng_state" in checkpoint:
@@ -206,6 +209,26 @@ def train(config: dict[str, Any], resume_path: str | Path | None = None) -> Path
             }
             with metrics_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+            if success:
+                successful_path = checkpoints_directory / f"successful_episode_{episode + 1:05d}.pt"
+                save_checkpoint(
+                    successful_path,
+                    agent=agent,
+                    config=config,
+                    episode=episode + 1,
+                    global_step=global_step,
+                    rng=rng,
+                )
+                save_checkpoint(
+                    checkpoints_directory / "latest_success.pt",
+                    agent=agent,
+                    config=config,
+                    episode=episode + 1,
+                    global_step=global_step,
+                    rng=rng,
+                )
+                print(f"Saved successful-policy checkpoint: {successful_path}")
 
             if (episode + 1) % int(training_config["log_every_episodes"]) == 0 or episode == start_episode:
                 pseudo = update_metrics.get("pseudo_reward_raw_mean", float("nan"))

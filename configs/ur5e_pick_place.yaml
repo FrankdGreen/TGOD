@@ -45,6 +45,10 @@ tgod:
   # 设为 0 可关闭，得到仅按论文公式字面实现的两个 MINE 分数。
   demonstration_support_weight: 1.0
   demonstration_progress_weight: 0.0
+  # 可选的示范派生夹爪阶段引导；0 表示关闭，保持论文TGOD-SD核心目标。
+  gripper_imitation_weight: 0.0
+  gripper_close_progress: 0.16
+  gripper_release_progress: 0.74
   pseudo_reward_clip: 10.0
   reward_normalization: true
   mine_gradient_clip: 10.0
@@ -68,6 +72,7 @@ training:
   episodes: 2000
   log_every_episodes: 10
   checkpoint_every_episodes: 10
+  reset_reward_statistics_on_resume: false
   match_after_training: true
 
 matching:

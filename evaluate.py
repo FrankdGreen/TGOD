@@ -18,7 +18,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate TGOD candidates and select one with Sinkhorn distance.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--checkpoint", default=str(DEFAULT_CHECKPOINT))
+    parser.add_argument("--seed", type=int, help="Override candidate-generation seed.")
     parser.add_argument("--candidate-count", type=int)
+    parser.add_argument(
+        "--skill-index",
+        type=int,
+        help="Generate every candidate with one skill instead of cycling all skills.",
+    )
+    parser.add_argument(
+        "--deterministic-policy",
+        action="store_true",
+        help="Use the actor mean action instead of sampling its distribution.",
+    )
     parser.add_argument("--device")
     parser.add_argument("--output-dir")
     parser.add_argument(
@@ -32,8 +43,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     overrides: dict[str, Any] = {}
+    if args.seed is not None:
+        overrides["seed"] = args.seed
     if args.candidate_count is not None:
         overrides.setdefault("matching", {})["candidate_count"] = args.candidate_count
+    if args.skill_index is not None:
+        overrides.setdefault("matching", {})["skill_index"] = args.skill_index
+    if args.deterministic_policy:
+        overrides.setdefault("matching", {})["deterministic_policy"] = True
     if args.device is not None:
         overrides["device"] = args.device
     if args.output_dir is not None:
