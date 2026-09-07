@@ -13,7 +13,7 @@ from .config import resolve_input_path, resolve_output_path, select_device
 from .env import UR5ePickPlaceEnv
 from .expert import ExpertTrajectory
 from .replay_buffer import ReplayBuffer
-from .schema import OBS_DIM
+from .schema import ACTION_DIM, OBS_DIM
 from .trajectory import generate_and_match, one_hot_skill
 
 
@@ -34,7 +34,7 @@ def build_components(
     device = select_device(str(config["device"]))
     expert = ExpertTrajectory.load(expert_directory)
     env = UR5ePickPlaceEnv(scene_path, expert, config["environment"], render_mode=render_mode)
-    agent = TGODSACAgent(OBS_DIM, 4, expert.relation_dim, config, device)
+    agent = TGODSACAgent(OBS_DIM, ACTION_DIM, expert.relation_dim, config, device)
     return expert, env, agent, output_directory, device
 
 
@@ -97,7 +97,7 @@ def train(config: dict[str, Any], resume_path: str | Path | None = None) -> Path
     replay = ReplayBuffer(
         int(sac_config["replay_size"]),
         OBS_DIM,
-        4,
+        ACTION_DIM,
         agent.skill_dim,
         expert.relation_dim,
         seed,

@@ -11,7 +11,7 @@ import numpy as np
 from gymnasium import spaces
 
 from .expert import ExpertTrajectory
-from .schema import OBS_DIM
+from .schema import ACTION_DIM, OBS_DIM
 
 
 def _solve_spd_3x3(matrix: np.ndarray, right_hand_side: np.ndarray) -> np.ndarray:
@@ -40,8 +40,9 @@ class UR5ePickPlaceEnv(gym.Env):
 
     The returned environment reward is always zero. TGOD supplies the internal
     MINE pseudo-reward inside the learner, so task success is only an evaluation
-    signal. The supplied scene has no gripper DOF; grasping is a contact/proximity
-    latch followed by the same kinematic cup attachment used by SAC_ur5e.
+    signal. The supplied scene has no gripper DOF, so grasp and release are
+    deterministic environment events: touching the cup attaches it, and lowering
+    a lifted cup into the goal region releases it. The policy learns motion only.
     """
 
     metadata = {"render_modes": ["human"], "render_fps": 50}
@@ -73,11 +74,6 @@ class UR5ePickPlaceEnv(gym.Env):
         self.ik_iterations = int(config["ik_iterations"])
         self.ik_damping = float(config["ik_damping"])
         self.grasp_radius = float(config["grasp_radius"])
-        self.grasp_command_threshold = float(config["grasp_command_threshold"])
-        self.release_command_threshold = float(config["release_command_threshold"])
-        self.grasp_confirm_steps = int(config["grasp_confirm_steps"])
-        self.release_confirm_steps = int(config["release_confirm_steps"])
-        self.regrasp_cooldown_steps = int(config["regrasp_cooldown_steps"])
         self.cup_tcp_offset = np.asarray(config["cup_tcp_offset"], dtype=np.float64)
         self.blue_mat_center = np.asarray(config["blue_mat_center"], dtype=np.float64)
         self.success_radius = float(config["success_radius"])
@@ -103,7 +99,9 @@ class UR5ePickPlaceEnv(gym.Env):
         }
         self._wrist_body_id = self._named_id(mujoco.mjtObj.mjOBJ_BODY, "wrist_3_link")
 
-        self.action_space: spaces.Box = spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)
+        self.action_space: spaces.Box = spaces.Box(
+            -1.0, 1.0, shape=(ACTION_DIM,), dtype=np.float32
+        )
         self.observation_space: spaces.Box = spaces.Box(
             -np.inf, np.inf, shape=(OBS_DIM,), dtype=np.float32
         )
@@ -113,9 +111,6 @@ class UR5ePickPlaceEnv(gym.Env):
         self._placed = False
         self._ever_grasped = False
         self._cup_lifted = False
-        self._grasp_command_streak = 0
-        self._release_command_streak = 0
-        self._regrasp_cooldown = 0
 
     @staticmethod
     def _load_model_unicode_safe(xml_path: Path) -> mujoco.MjModel:
@@ -250,9 +245,6 @@ class UR5ePickPlaceEnv(gym.Env):
         self._placed = False
         self._ever_grasped = False
         self._cup_lifted = False
-        self._grasp_command_streak = 0
-        self._release_command_streak = 0
-        self._regrasp_cooldown = 0
         mujoco.mj_forward(self.model, self.data)
         info = self._info(contact=False, collision=False, joint_target=self.data.qpos[:6])
         return self._observation(), info
@@ -266,7 +258,6 @@ class UR5ePickPlaceEnv(gym.Env):
             "placed": bool(self._placed),
             "ever_grasped": bool(self._ever_grasped),
             "cup_lifted": bool(self._cup_lifted),
-            "regrasp_cooldown": int(self._regrasp_cooldown),
             "contact": bool(contact),
             "collision": bool(collision),
             "step": int(self._step_count),
@@ -281,8 +272,10 @@ class UR5ePickPlaceEnv(gym.Env):
 
     def step(self, action: np.ndarray):
         action = np.asarray(action, dtype=np.float32)
-        if action.shape != (4,):
-            raise ValueError(f"Action must have shape (4,), got {action.shape}.")
+        if action.shape != (ACTION_DIM,):
+            raise ValueError(
+                f"Motion-only action must have shape ({ACTION_DIM},), got {action.shape}."
+            )
         action = np.clip(action, self.action_space.low, self.action_space.high)
         target_position = np.clip(
             self._get_ee_pos() + action[:3] * self.max_ee_step,
@@ -302,29 +295,9 @@ class UR5ePickPlaceEnv(gym.Env):
             self._actual_cup_wrist_contact()
             or np.linalg.norm(self._get_ee_pos() - self._cup_anchor()) <= self.grasp_radius
         )
-        if self._grasped:
-            self._grasp_command_streak = 0
-            if action[3] < self.release_command_threshold:
-                self._release_command_streak += 1
-            else:
-                self._release_command_streak = 0
-            if self._release_command_streak >= self.release_confirm_steps:
-                self._grasped = False
-                self._release_command_streak = 0
-                self._regrasp_cooldown = self.regrasp_cooldown_steps
-        else:
-            self._release_command_streak = 0
-            if self._regrasp_cooldown > 0:
-                self._regrasp_cooldown -= 1
-                self._grasp_command_streak = 0
-            elif action[3] > self.grasp_command_threshold and contact:
-                self._grasp_command_streak += 1
-            else:
-                self._grasp_command_streak = 0
-            if self._grasp_command_streak >= self.grasp_confirm_steps:
-                self._grasped = True
-                self._ever_grasped = True
-                self._grasp_command_streak = 0
+        if not self._grasped and contact:
+            self._grasped = True
+            self._ever_grasped = True
         if self._grasped:
             self._attach_cup()
             if self._get_cup_pos()[2] >= self.minimum_lift_height:
@@ -337,12 +310,13 @@ class UR5ePickPlaceEnv(gym.Env):
         )
         goal_distance = float(np.linalg.norm(cup_position - cup_goal))
         if (
-            not self._grasped
+            self._grasped
             and self._ever_grasped
             and self._cup_lifted
             and goal_distance < self.success_radius
             and cup_position[2] <= self.success_z_max
         ):
+            self._grasped = False
             self._placed = True
         collision = self._cup_collision_with_robot()
         terminated = bool(self._placed)

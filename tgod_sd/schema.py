@@ -12,6 +12,7 @@ CUP_TO_GOAL = slice(21, 24)
 FLAGS = slice(24, 26)
 PROGRESS = 26
 OBS_DIM = 27
+ACTION_DIM = 3
 
 OBSERVATION_SCALE = np.asarray(
     [np.pi] * 6 + [5.0] * 6 + [1.0] * 12 + [1.0, 1.0, 1.0],

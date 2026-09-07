@@ -77,9 +77,6 @@ def validate_config(config: Mapping[str, Any]) -> None:
         "environment.max_episode_steps": config["environment"]["max_episode_steps"],
         "environment.frame_skip": config["environment"]["frame_skip"],
         "environment.ik_iterations": config["environment"]["ik_iterations"],
-        "environment.grasp_confirm_steps": config["environment"]["grasp_confirm_steps"],
-        "environment.release_confirm_steps": config["environment"]["release_confirm_steps"],
-        "environment.regrasp_cooldown_steps": config["environment"]["regrasp_cooldown_steps"],
         "tgod.num_skills": config["tgod"]["num_skills"],
         "sac.batch_size": config["sac"]["batch_size"],
         "sac.replay_size": config["sac"]["replay_size"],
@@ -140,7 +137,6 @@ def validate_config(config: Mapping[str, Any]) -> None:
         "tgod.demonstration_mi_weight": config["tgod"]["demonstration_mi_weight"],
         "tgod.demonstration_support_weight": config["tgod"]["demonstration_support_weight"],
         "tgod.demonstration_progress_weight": config["tgod"]["demonstration_progress_weight"],
-        "tgod.gripper_imitation_weight": config["tgod"]["gripper_imitation_weight"],
         "matching.qpos_weight": config["matching"]["qpos_weight"],
         "matching.tcp_weight": config["matching"]["tcp_weight"],
         "matching.cup_weight": config["matching"]["cup_weight"],
@@ -151,13 +147,6 @@ def validate_config(config: Mapping[str, Any]) -> None:
     ]
     if invalid_nonnegative:
         raise ValueError(f"Configuration values cannot be negative: {invalid_nonnegative}")
-    close_progress = float(config["tgod"]["gripper_close_progress"])
-    release_progress = float(config["tgod"]["gripper_release_progress"])
-    if not 0.0 <= close_progress < release_progress <= 1.0:
-        raise ValueError(
-            "tgod gripper progress must satisfy 0 <= gripper_close_progress "
-            "< gripper_release_progress <= 1."
-        )
     requested_skill = config["matching"].get("skill_index")
     if requested_skill is not None and (
         isinstance(requested_skill, bool)

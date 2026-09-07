@@ -59,6 +59,7 @@ class TGODSACAgent:
         tgod_config = config["tgod"]
         sac_config = config["sac"]
         self.skill_dim = int(tgod_config["num_skills"])
+        self.action_dim = int(action_dim)
         hidden_dims = network_config["hidden_dims"]
         mine_hidden_dims = network_config["mine_hidden_dims"]
         activation = str(network_config["activation"])
@@ -95,11 +96,6 @@ class TGODSACAgent:
         self.demonstration_mi_weight = float(tgod_config["demonstration_mi_weight"])
         self.demonstration_support_weight = float(tgod_config["demonstration_support_weight"])
         self.demonstration_progress_weight = float(tgod_config["demonstration_progress_weight"])
-        # Optional demonstration-derived engineering extension. A zero weight
-        # preserves the TGOD-SD pseudo-reward without gripper phase guidance.
-        self.gripper_imitation_weight = float(tgod_config["gripper_imitation_weight"])
-        self.gripper_close_progress = float(tgod_config["gripper_close_progress"])
-        self.gripper_release_progress = float(tgod_config["gripper_release_progress"])
         self.pseudo_reward_clip = float(tgod_config["pseudo_reward_clip"])
         self.reward_normalization = bool(tgod_config["reward_normalization"])
         self.mine_gradient_clip = float(tgod_config["mine_gradient_clip"])
@@ -166,24 +162,11 @@ class TGODSACAgent:
                 self.gamma * torch.log(next_demonstration_support)
                 - torch.log(demonstration_support)
             )
-            progress = observation[:, -1:]
-            should_grasp = (progress >= self.gripper_close_progress) & (
-                progress < self.gripper_release_progress
-            )
-            expert_gripper_action = torch.where(
-                should_grasp,
-                torch.ones_like(progress),
-                -torch.ones_like(progress),
-            )
-            gripper_imitation_reward = -self.gripper_imitation_weight * torch.square(
-                action[:, 3:4] - expert_gripper_action
-            )
             raw_reward = (
                 self.state_mi_weight * self.state_mine.pointwise_reward(observation, skill)
                 + self.demonstration_mi_weight * self.demo_mine.pointwise_reward(relation, skill)
                 + support_reward
                 + progress_reward
-                + gripper_imitation_reward
             )
             if self.reward_normalization:
                 self.reward_moments.update(raw_reward)
@@ -240,7 +223,6 @@ class TGODSACAgent:
             "pseudo_reward_mean": float(pseudo_reward.mean().item()),
             "demonstration_support_mean": float(demonstration_support.mean().item()),
             "demonstration_progress_reward_mean": float(progress_reward.mean().item()),
-            "gripper_imitation_reward_mean": float(gripper_imitation_reward.mean().item()),
             "q_loss": float(q_loss.item()),
             "actor_loss": float(actor_loss.item()),
             "alpha_loss": float(alpha_loss.item()),
@@ -254,6 +236,7 @@ class TGODSACAgent:
 
     def state_dict(self) -> dict[str, Any]:
         return {
+            "action_dim": self.action_dim,
             "actor": self.actor.state_dict(),
             "q1": self.q1.state_dict(),
             "q2": self.q2.state_dict(),
@@ -271,6 +254,17 @@ class TGODSACAgent:
         }
 
     def load_state_dict(self, state: dict[str, Any], *, load_optimizers: bool = True) -> None:
+        checkpoint_action_dim = state.get("action_dim")
+        if checkpoint_action_dim is None:
+            mean_weight = state.get("actor", {}).get("mean.weight")
+            if mean_weight is not None:
+                checkpoint_action_dim = int(mean_weight.shape[0])
+        if checkpoint_action_dim is not None and int(checkpoint_action_dim) != self.action_dim:
+            raise ValueError(
+                "Checkpoint action dimension "
+                f"{int(checkpoint_action_dim)} is incompatible with the current "
+                f"motion-only action dimension {self.action_dim}. Start a fresh training run."
+            )
         self.actor.load_state_dict(state["actor"])
         self.q1.load_state_dict(state["q1"])
         self.q2.load_state_dict(state["q2"])

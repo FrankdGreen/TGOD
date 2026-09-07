@@ -16,13 +16,8 @@ environment:
   max_ee_step: 0.015
   ik_iterations: 30
   ik_damping: 0.05
+  # 场景没有夹爪自由度：末端触碰杯子时自动夹取，杯子进入目标区域后自动释放。
   grasp_radius: 0.015
-  grasp_command_threshold: 0.2
-  release_command_threshold: -0.2
-  # 连续确认和释放冷却抑制随机策略造成的夹爪开合抖动。
-  grasp_confirm_steps: 3
-  release_confirm_steps: 2
-  regrasp_cooldown_steps: 20
   cup_tcp_offset: [0.0, 0.0, 0.105]
   blue_mat_center: [0.45, 0.35]
   success_radius: 0.06
@@ -49,11 +44,6 @@ tgod:
   demonstration_support_weight: 10.0
   # 奖励下一状态相对当前状态更接近按时间对齐的专家轨迹。
   demonstration_progress_weight: 5.0
-  # 工程扩展：由专家杯子开始运动/到达目标的时刻推导夹爪开合阶段。
-  # 设为 0 可关闭该项，回到不包含夹爪监督的TGOD-SD消融设置。
-  gripper_imitation_weight: 2.0
-  gripper_close_progress: 0.16
-  gripper_release_progress: 0.74
   pseudo_reward_clip: 10.0
   reward_normalization: true
   mine_gradient_clip: 10.0

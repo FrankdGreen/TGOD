@@ -10,7 +10,7 @@ import numpy as np
 from tgod_sd.config import load_config, resolve_input_path
 from tgod_sd.env import UR5ePickPlaceEnv, _solve_spd_3x3
 from tgod_sd.expert import ExpertTrajectory
-from tgod_sd.schema import OBS_DIM
+from tgod_sd.schema import ACTION_DIM, OBS_DIM
 
 
 class EnvironmentTests(unittest.TestCase):
@@ -32,7 +32,9 @@ class EnvironmentTests(unittest.TestCase):
         env = UR5ePickPlaceEnv(self.scene, self.expert, environment_config)
         try:
             observation, _ = env.reset(seed=1)
-            next_observation, reward, terminated, truncated, _ = env.step(np.zeros(4, dtype=np.float32))
+            next_observation, reward, terminated, truncated, _ = env.step(
+                np.zeros(ACTION_DIM, dtype=np.float32)
+            )
             self.assertEqual(observation.shape, (OBS_DIM,))
             self.assertEqual(next_observation.shape, (OBS_DIM,))
             self.assertEqual(reward, 0.0)
@@ -61,13 +63,11 @@ class EnvironmentTests(unittest.TestCase):
             terminated = truncated = False
             info = {}
             for index, tcp_position in enumerate(self.expert.tcp_pose[:, :3]):
-                action = np.zeros(4, dtype=np.float32)
-                action[:3] = np.clip(
+                action = np.clip(
                     (tcp_position - env._get_ee_pos()) / env.max_ee_step,
                     -1.0,
                     1.0,
-                )
-                action[3] = 1.0 if 80 <= index < 370 else -1.0
+                ).astype(np.float32)
                 _, reward, terminated, truncated, info = env.step(action)
                 self.assertEqual(reward, 0.0)
                 if terminated or truncated:
@@ -75,17 +75,18 @@ class EnvironmentTests(unittest.TestCase):
             self.assertTrue(terminated)
             self.assertFalse(truncated)
             self.assertTrue(info["success"])
-            self.assertLess(info["cup_goal_distance"], 0.01)
+            self.assertLess(info["cup_goal_distance"], env.success_radius)
+            self.assertTrue(info["ever_grasped"])
+            self.assertTrue(info["cup_lifted"])
+            self.assertFalse(info["grasped"])
         finally:
             env.close()
 
-    def test_initial_grip_command_cannot_grasp_at_a_distance(self) -> None:
+    def test_no_grasp_without_contact(self) -> None:
         env = UR5ePickPlaceEnv(self.scene, self.expert, self.config["environment"])
         try:
             env.reset(seed=3)
-            _, _, _, _, info = env.step(
-                np.asarray([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
-            )
+            _, _, _, _, info = env.step(np.zeros(ACTION_DIM, dtype=np.float32))
             self.assertFalse(info["contact"])
             self.assertFalse(info["grasped"])
             self.assertFalse(info["ever_grasped"])
@@ -101,13 +102,20 @@ class EnvironmentTests(unittest.TestCase):
                 dtype=np.float32,
             )
             env.set_replay_state(env.data.qpos[:6].copy(), cup_goal)
-            _, _, terminated, _, info = env.step(
-                np.asarray([0.0, 0.0, 0.0, -1.0], dtype=np.float32)
-            )
+            _, _, terminated, _, info = env.step(np.zeros(ACTION_DIM, dtype=np.float32))
             self.assertFalse(terminated)
             self.assertFalse(info["success"])
             self.assertFalse(info["ever_grasped"])
             self.assertFalse(info["cup_lifted"])
+        finally:
+            env.close()
+
+    def test_legacy_four_dimensional_action_is_rejected(self) -> None:
+        env = UR5ePickPlaceEnv(self.scene, self.expert, self.config["environment"])
+        try:
+            env.reset(seed=5)
+            with self.assertRaisesRegex(ValueError, "Motion-only action"):
+                env.step(np.zeros(4, dtype=np.float32))
         finally:
             env.close()
 

@@ -9,7 +9,7 @@ from tgod_sd.agent import TGODSACAgent
 from tgod_sd.config import load_config, resolve_input_path, select_device
 from tgod_sd.env import UR5ePickPlaceEnv
 from tgod_sd.expert import ExpertTrajectory
-from tgod_sd.schema import OBS_DIM
+from tgod_sd.schema import ACTION_DIM, OBS_DIM
 from tgod_sd.sinkhorn import sinkhorn_distance
 from tgod_sd.trajectory import one_hot_skill
 
@@ -29,12 +29,16 @@ def main() -> None:
     expert = ExpertTrajectory.load(expert_directory)
     env = UR5ePickPlaceEnv(scene, expert, config["environment"])
     observation, _ = env.reset(seed=0)
-    next_observation, reward, terminated, truncated, info = env.step(np.zeros(4, dtype=np.float32))
+    next_observation, reward, terminated, truncated, info = env.step(
+        np.zeros(ACTION_DIM, dtype=np.float32)
+    )
     assert observation.shape == (OBS_DIM,) and next_observation.shape == (OBS_DIM,)
     assert reward == 0.0 and not terminated and not truncated
     assert np.isfinite(next_observation).all() and not info["success"]
 
-    agent = TGODSACAgent(OBS_DIM, 4, expert.relation_dim, config, select_device(config["device"]))
+    agent = TGODSACAgent(
+        OBS_DIM, ACTION_DIM, expert.relation_dim, config, select_device(config["device"])
+    )
     rng = np.random.default_rng(0)
     batch_size = 8
     observations = np.repeat(observation[None, :], batch_size, axis=0)
@@ -54,7 +58,7 @@ def main() -> None:
         next_relations.append(expert.relation_feature(next_observations[index], next_progress))
     batch = {
         "observation": observations.astype(np.float32),
-        "action": rng.uniform(-1.0, 1.0, size=(batch_size, 4)).astype(np.float32),
+        "action": rng.uniform(-1.0, 1.0, size=(batch_size, ACTION_DIM)).astype(np.float32),
         "next_observation": next_observations.astype(np.float32),
         "skill": skills.astype(np.float32),
         "relation": np.asarray(relations, dtype=np.float32),
