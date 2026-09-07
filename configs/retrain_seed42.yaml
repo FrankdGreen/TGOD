@@ -68,7 +68,7 @@ training:
   log_every_episodes: 10
   checkpoint_every_episodes: 10
   # 续训时奖励组成已变化，不能沿用旧checkpoint累计的归一化统计。
-  reset_reward_statistics_on_resume: true
+  reset_reward_statistics_on_resume: false
   # 先训练再单独评估，避免训练结束时自动覆盖评估结果。
   match_after_training: false
 
