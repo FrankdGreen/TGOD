@@ -120,6 +120,11 @@ class ExpertTrajectory:
         )
 
     def relation_feature(self, observation: np.ndarray, progress: float) -> np.ndarray:
+        """Existing proxy for the paper's unspecified demonstration-MINE input.
+
+        This is not a verified encoding of I(Z;D). Proximity is an input
+        feature only; it no longer supplies a separate shaping reward.
+        """
         candidate = matching_feature_from_observation(observation)
         target = self.feature_at(progress)
         candidate_normalized = (candidate - self.feature_mean) / self.feature_scale

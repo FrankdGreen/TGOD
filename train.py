@@ -15,11 +15,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train TGOD-SD on the UR5e white-cup pick-and-place task.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="YAML configuration file.")
     parser.add_argument("--seed", type=int, help="Override the experiment random seed.")
-    parser.add_argument("--episodes", type=int, help="Override training.episodes.")
+    budget = parser.add_mutually_exclusive_group()
+    budget.add_argument("--episodes", type=int, help="Total episode limit, including completed episodes.")
+    budget.add_argument("--additional-episodes", type=int, help="Add a fixed episode budget after the specified checkpoint.")
     parser.add_argument("--candidate-count", type=int, help="Override matching.candidate_count.")
     parser.add_argument("--device", help="Override device (auto/cpu/cuda/cuda:0).")
     parser.add_argument("--output-dir", help="Override paths.output_dir.")
-    parser.add_argument("--resume", help="Resume policy/optimizers from a checkpoint; replay is refilled.")
+    parser.add_argument("--resume", help="Resume this protocol's latest.pt with complete replay and RNG state.")
     parser.add_argument("--no-match", action="store_true", help="Skip candidate generation after training.")
     return parser.parse_args()
 
@@ -40,7 +42,11 @@ def main() -> None:
     if args.no_match:
         overrides.setdefault("training", {})["match_after_training"] = False
     config = load_config(args.config, overrides)
-    train(config, args.resume)
+    train(
+        config,
+        args.resume,
+        additional_episodes=args.additional_episodes,
+    )
 
 
 if __name__ == "__main__":

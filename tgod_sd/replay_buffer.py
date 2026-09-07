@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import numpy as np
 
 
 class ReplayBuffer:
+    _ARRAY_NAMES = (
+        "observations", "actions", "next_observations", "skills",
+        "relations", "next_relations", "terminals",
+    )
+
     def __init__(
         self,
         capacity: int,
@@ -68,4 +74,61 @@ class ReplayBuffer:
         }
 
     def state_dict(self) -> dict[str, Any]:
-        return {"capacity": self.capacity, "index": self._index, "size": self._size}
+        """Snapshot occupied slots in their ring order, without uninitialized memory."""
+        return {
+            "capacity": self.capacity,
+            "index": self._index,
+            "size": self._size,
+            "rng_state": copy.deepcopy(self._rng.bit_generator.state),
+            **{name: getattr(self, name)[:self._size].copy() for name in self._ARRAY_NAMES},
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore a full replay snapshot; reject incompatible or incomplete data."""
+        required = {"capacity", "index", "size", "rng_state", *self._ARRAY_NAMES}
+        missing = required.difference(state)
+        if missing:
+            raise ValueError(f"Replay checkpoint is incomplete; missing keys: {sorted(missing)}")
+        for name in ("capacity", "index", "size"):
+            value = state[name]
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+                raise ValueError(f"Replay checkpoint {name} must be an integer.")
+        capacity, index, size = (int(state[name]) for name in ("capacity", "index", "size"))
+        if capacity != self.capacity:
+            raise ValueError(
+                f"Replay checkpoint capacity {capacity} differs from configured capacity {self.capacity}. "
+                "Use the checkpoint replay_size to restore its data."
+            )
+        if not 0 <= size <= capacity or not 0 <= index < capacity:
+            raise ValueError("Replay checkpoint size or index is outside its capacity.")
+        if size < capacity and index != size:
+            raise ValueError("Partially filled replay checkpoint must have index equal to size.")
+
+        # Validate and copy everything before mutating the live buffer.
+        arrays: dict[str, np.ndarray] = {}
+        for name in self._ARRAY_NAMES:
+            value = state[name]
+            expected_shape = (size, *getattr(self, name).shape[1:])
+            if not isinstance(value, np.ndarray) or value.shape != expected_shape:
+                raise ValueError(f"Replay checkpoint {name} must have shape {expected_shape}.")
+            if value.dtype != np.float32 or not np.isfinite(value).all():
+                raise ValueError(f"Replay checkpoint {name} must contain finite float32 values.")
+            arrays[name] = value.copy()
+        restored_rng = np.random.default_rng()
+        try:
+            restored_rng.bit_generator.state = copy.deepcopy(state["rng_state"])
+        except (TypeError, ValueError, KeyError) as error:
+            raise ValueError("Replay checkpoint contains an invalid RNG state.") from error
+        for name, value in arrays.items():
+            getattr(self, name)[:size] = value
+        self._index = index
+        self._size = size
+        self._rng = restored_rng
+
+    def skill_counts(self) -> np.ndarray:
+        """Count occupied transitions for each discrete (one-hot) skill."""
+        if self._size == 0:
+            return np.zeros(self.skills.shape[1], dtype=np.int64)
+        return np.bincount(
+            np.argmax(self.skills[:self._size], axis=1), minlength=self.skills.shape[1]
+        ).astype(np.int64)

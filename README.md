@@ -1,118 +1,104 @@
 # TGOD-SD：UR5e 单示范模仿学习
 
-本项目根据论文《基于引导多样性的护理机器人模仿学习》（DOI: `10.13973/j.cnki.robot.240269`）实现一个可运行的 TGOD-SD 工程，并复用相邻 `SAC_ur5e` 项目中的 MuJoCo UR5e 场景和单条专家示范。任务是让 UR5e 将白色杯子从红色垫子拿起并放到蓝色垫子。
+本项目依据论文《基于引导多样性的护理机器人模仿学习》（DOI：`10.13973/j.cnki.robot.240269`）实现 TGOD-SD，并使用已有 MuJoCo UR5e 场景和单条专家示范。任务是把白杯从红垫搬到蓝垫。当前以复现论文公开的算法为主，未公开的细节作为实现假设单独说明。
 
-## 算法对应关系
+## 论文对应关系与实现边界
 
-论文中的 TGOD-SD 是两阶段方法：
+1. 每回合从固定均匀先验采样技能 `z`，整条轨迹保持该技能。SAC 的 actor、双 Q 以状态和 `z` 为输入，保留条件动作熵目标。
+2. MINE 损失固定为两个 DV 下界的负和，SAC 伪奖励固定为两个现有 MINE 逐样本项的等权和。环境奖励恒为 0；不再叠加示范接近度或进度奖励，不对伪奖励做运行均值归一化或裁剪。
+3. 训练执行预先设定的 episode 预算。成功、抓取、抬杯、放置、末态距离仅用于日志，不参与奖励、检查点选择或早停。
+4. 训练结束后生成候选，按全部候选中的最小 Sinkhorn divergence 选轨迹。成功标记不用于预先过滤候选。
 
-1. TGOD：技能变量 `z` 条件化 SAC 策略；SAC 负责最大化条件动作熵。论文把内部伪奖励写成 `MINE(Z;S)+MINE(Z;D)`，环境不提供人工任务奖励。
-2. SD：训练结束后生成多条完整候选轨迹，计算候选与专家示范之间的熵正则最优传输（Sinkhorn）距离，输出距离最小的轨迹。
+**这仍不能称为原论文的完全等价实现。** 论文没有给出单条示范下 `I(Z;D)` 的联合采样与编码定义。如果把完整示范视作恒定随机变量，该互信息退化为零；这不说明论文作者实际采用了这种定义。现有代码保留 `I(Z;f(S,D_t,t))` 的关系特征代理，包含当前状态、时间对齐的专家状态、差值、接近度与相位。接近度仍是 MINE 的一个输入，但已不再形成独立奖励。此代理与论文第二项是否等价，尚需作者代码或补充说明验证；本轮不另行设计替代算法。
 
-论文没有公开网络层数、技能数、MINE 正负样本构造、SAC 超参数、Sinkhorn 正则系数以及单条固定示范下 `I(Z;D)` 的可计算定义。本实现将这些缺失项集中放在 `configs/ur5e_pick_place.yaml`，并采用以下明确的工程补全：
+以下既有实现假设也保留并披露：
 
-- 使用离散 one-hot 技能变量，每个回合采样一次；
-- 策略动作只包含末端执行器的三维位移；场景没有真实夹爪自由度，因此触碰杯子时由环境自动夹取，抬起的杯子进入目标区域后自动释放，夹爪不参与 TGOD 伪奖励；
-- 使用 Donsker–Varadhan MINE 下界和批内打乱技能构造乘积分布样本；
-- 单条固定示范在数学上会使 `I(Z;D)=0`。代码因此把第二项明确实现为 `I(Z;f(S,D_t,t))` 的关系互信息代理，并加入通用的 `log(proximity)` 示范支持先验，使该项确实偏好靠近按时间对齐的专家状态；它是示范派生的内在信号，不是红垫/蓝垫等任务奖励，权重可设为 0 做字面公式消融；
-- SAC 的 actor、双 Q 网络均以 `[observation, z]` 为输入；
-- Sinkhorn 特征默认包含关节角、TCP 位置、杯子位置和归一化时间，并按专家统计量归一化；时间特征只能缓解反向经过相同空间点的轨迹误判，并非严格保序 OT；
-- 成功候选会在 SD 评分前用末态补齐到 500 帧，以保留专家轨迹的真实时间轴；
-- 默认按论文描述对全部候选取最小 SD；`prefer_successful=true` 是可选的任务安全扩展，且成功必须经历抓取、抬杯和释放；
-- reward normalization/clip、自动温度、超时是否 bootstrap、均匀 OT 权重、平方欧氏 ground cost、随机候选采样等也都是配置中公开的工程选择；回放池中的历史转移按当前 MINE 重算伪奖励，而不是冻结采集时分数。
+- 离散 one-hot 技能、批内打乱技能构造 MINE 负样本、网络结构、自动温度、优化器与梯度裁剪参数均为项目设置，未核实为论文原始设置。
+- 动作为三维末端位移；环境沿用运动学控制及自动抓取/释放。该单臂仿真任务与论文双臂护理实验存在差异。
+- SD 使用经专家统计量缩放的关节角、TCP、杯位置和时间特征、均匀 OT 质量及平方欧氏代价；提前成功轨迹用末态补齐到 episode 时间范围。这些预处理并非论文公开的完整规范；时间特征也不等于严格保序 OT。
+- 论文约“2000轮次”不能严格换算成 2000 episodes。本项目将 2000 episodes、每回合最多 500 步作为明确的训练预算假设。
 
-这些选择是可运行复现所需的补全，不冒充论文原始参数。
+## 本轮修改说明
 
-## 资产
+| 文件 | 修改及原因 |
+| --- | --- |
+| `tgod_sd/agent.py` | 两个 MINE 损失/奖励项固定等权；删除 support/progress 奖励及奖励归一化、裁剪执行路径。保留 SAC、双 Q、温度、目标网络、MINE 负采样与梯度裁剪实现。旧奖励统计仅保留检查点读取兼容。 |
+| `tgod_sd/expert.py` | 仅补充关系特征是论文未公开细节的代理假设的注释，计算方式不变。 |
+| `tgod_sd/trainer.py` | 删除按任务指标比较续训检查点、最佳模型、成功专属快照、周期性任务评估、早停和预算外 replay 预填充。只按指定回合数训练和固定间隔保存；保留阶段日志、完整 replay/RNG、配置与来源记录。 |
+| `train.py` | 删除 `--resume-candidates`；保留指定检查点 `--resume`、总预算 `--episodes` 和追加预算 `--additional-episodes`。 |
+| `tgod_sd/trajectory.py` | 删除成功优先筛选分支，始终对全部候选取最小 SD；保留原 SD 数值求解与特征处理。 |
+| `evaluate.py`、`tgod_sd/evaluation.py` | 删除成功优先 CLI 和任务排名函数；独立评估保留配置恢复与统计，输出明确的全候选最小 SD 规则。 |
+| `tgod_sd/config.py` | 新增训练专用复现约束，拒绝额外奖励、非等权 MI、奖励归一化/裁剪及已撤销的任务驱动训练选项。历史配置仍能加载用于只读评估。 |
+| `configs/ur5e_pick_place.yaml` | 默认配置对齐两项等权奖励与全候选最小 SD，其余既有数值尽量保留。 |
+| `configs/paper_seed45.yaml` | 新的独立复现配置；保留 seed45 实验的环境尺度 `0.015`、8 技能、500 步上限及原 SAC/MINE 学习率 `3e-4/5e-5`，撤销上一轮的 SAC 降学习率方案。 |
+| `configs/retrain_seed42.yaml`、`configs/finetune_seed45.yaml` | 数值保留作历史实验记录，标注不可用于新的复现训练。 |
+| 测试文件 | 核对实际 TD 目标、固定预算、续训状态和候选选择规则，替换先前针对早停/选优的测试。 |
 
-默认直接读取相邻项目中的原始文件，不复制或修改它们：
+上一轮加入的 `checkpoint_config.py`、replay 数据校验、实际学习率恢复、配置/资源哈希和独立评估日志继续保留，用于核对执行情况。旧的 `outputs/analysis_20260907` 报告记录的是当时的工程调参建议；当前训练方案以本说明为准。
+
+## 资产与验证
+
+YAML 的路径相对项目根目录解析：
 
 ```text
-../SAC_ur5e/universal_robots_ur5e/scene.xml
-../SAC_ur5e/data/similar_expert/expert_demo.npy
-../SAC_ur5e/data/similar_expert/expert_qpos.npy
-../SAC_ur5e/data/similar_expert/expert_cup.npy
-../SAC_ur5e/data/similar_expert/expert_initial_state.npz
+universal_robots_ur5e/scene.xml
+data/similar_expert/expert_demo.npy
+data/similar_expert/expert_qpos.npy
+data/similar_expert/expert_cup.npy
+data/similar_expert/expert_initial_state.npz
 ```
 
-专家数据必须分别具有 `(T,12)`、`(T,6)`、`(T,3)` 的形状。加载器会检查长度、有限值和初始状态。
+专家数组形状分别为 `(T,12)`、`(T,6)`、`(T,3)`，加载时检查长度、有限值和初始状态。需要 Python 3.10 或更高版本：
 
-## 安装与验证
-
-需要 Python 3.10 或更高版本。
-
-```powershell
+```bash
 python -m pip install -r requirements.txt
 python smoke_test.py
 python -m unittest discover -s tests -v
 ```
 
-`smoke_test.py` 会验证场景、专家数据、环境单步、MINE/SAC 一次参数更新以及 Sinkhorn 距离，不启动长时间训练。
+## 新的训练与续训
 
-## 训练
+已有 `motion_only_seed45` 检查点使用了旧奖励目标，不能接到新目标后称为同一复现实验。因此从头运行，并使用独立目录：
 
-论文只展示约 2000 个含义并不完全明确的“轮次”后伪奖励收敛。默认配置把它映射为 2000 个 episode（每个最多 500 步），这是复现假设，不是可由论文核实的原始超参数：
-
-```powershell
-python train.py --config configs/ur5e_pick_place.yaml
+```bash
+python -u train.py --config configs/paper_seed45.yaml --episodes 2000 --no-match
 ```
 
-先做短流程检查：
+输出默认写到 `outputs/paper_seed45/`。2000 是本次预先声明的总预算，日志可用于检查有限值、损失与行为，不按成功率切换最终模型。若采用 800 episodes 的预算，在开始前将命令的 `2000` 改为 `800`，并记录预算；不能据此认定训练已经或必然收敛。
 
-```powershell
-python train.py --episodes 2 --candidate-count 2 --device cpu
+- `metrics.jsonl`：每回合阶段诊断、技能、累计步数、replay 大小及更新批次的 MI/损失均值。更新统计来自历史 replay，不代表该回合专属回报。
+- `checkpoints/latest.pt`：最近保存的完整回合边界状态，包括策略、Q、MINE、优化器、有效 replay 及随机数状态。
+- `checkpoints/episode_*.pt`：按固定间隔保存的轻量模型，可做事后评估，不用于连续续训。
+- `config.resolved.yaml`、`run_manifest.json`：实际配置、学习率、预算、协议标记以及代码/资产来源。
+
+新协议训练产生的完整 `latest.pt` 可以继续同一实验。下面的 `--episodes` 是包含已完成回合的**总上限**：
+
+```bash
+python -u train.py --config configs/paper_seed45.yaml --resume outputs/paper_seed45/checkpoints/latest.pt --episodes 2000 --no-match
 ```
 
-训练结果写入 `outputs/ur5e_pick_place/`：
+`--additional-episodes N` 追加 N 回合，与 `--episodes` 互斥。续训要求 seed、环境、网络、TGOD/SAC 参数和资产一致，并恢复完整 replay 与采样状态。旧协议、缺少 replay、损坏 replay 或训练参数变化会明确报错，不进行额外预填充或静默改变训练目标。
 
-- `metrics.jsonl`：每回合任务成功、伪奖励和各网络损失；
-- `checkpoints/latest.pt`：策略、双 Q、目标网络、MINE、优化器和配置；
-- `candidates/candidate_*.npz`：训练后采样的完整候选轨迹；
-- `candidate_scores.json`：每条候选的 Sinkhorn 距离和成功标记；
-- `selected_trajectory.npz`：最终选中的轨迹。
+中途 Ctrl+C 不把半个回合的状态覆盖到 `latest.pt`。默认最多需要重跑最近固定保存点以后的回合；若输出中已有更晚回合日志，应通过 `--output-dir` 指定新的续训目录，保留原记录。不同设备/软件环境仍可能产生数值差异，状态保存不保证跨平台逐位一致。
 
-训练可中断续跑：
+## 独立评估与回放
 
-```powershell
-python train.py --resume outputs/ur5e_pick_place/checkpoints/latest.pt
+使用固定预算结束时的 `latest.pt`，另设评估 seed 生成 160 条候选：
+
+```bash
+python -u evaluate.py --checkpoint outputs/paper_seed45/checkpoints/latest.pt --seed 46 --candidate-count 160 --output-dir outputs/paper_seed45/eval_seed46
 ```
 
-检查点不包含体积很大的 replay buffer；恢复后会先重新填充回放池，再继续梯度更新。
+评估默认读取检查点内的环境、网络、训练 seed 和匹配设置；CLI `--seed` 在其后覆盖。可用 `--config` 提供资源路径和匹配参数，但环境、网络、技能数冲突会报错，避免动作尺度误用。
 
-## 单独生成候选并匹配
+选择规则始终为**全部候选的最小 SD**。即使历史检查点保存 `prefer_successful=true`，当前评估也会覆盖为 false，并在 `evaluation_manifest.json` 和 `candidate_scores.json` 记录旧选项已忽略；这属于对旧策略采用当前选择协议的事后评估。所选轨迹可能失败，因此同时报告成功率和 SD 求解收敛标记，不能把最小 SD 当作任务成功或把未收敛的近似值当作可靠排名。
 
-```powershell
-python evaluate.py --checkpoint outputs/ur5e_pick_place/checkpoints/latest.pt
+新配置保留旧实验的 `epsilon=0.1`、`max_iterations=2000`、`tolerance=1e-5`，没有引入新的 SD 公式。后续求解精度调整应单独记录；本次短测试不证明大规模候选全部收敛。
+
+评估输出包括 `candidates/`、`candidate_scores.json`、`selected_trajectory.npz`、实际配置、来源及分技能诊断。回放命令：
+
+```bash
+python replay.py outputs/paper_seed45/eval_seed46/selected_trajectory.npz
 ```
 
-默认就是严格按论文描述对所有候选直接选最小 SD。若要先过滤成功候选，可把 `matching.prefer_successful` 改为 `true`，或在独立评估时加 `--prefer-successful`。
-
-## 回放
-
-无窗口检查最终位姿：
-
-```powershell
-python replay.py outputs/ur5e_pick_place/selected_trajectory.npz
-```
-
-打开 MuJoCo 窗口并按保存的 q-pos/杯子轨迹回放：
-
-```powershell
-python replay.py outputs/ur5e_pick_place/selected_trajectory.npz --render --realtime
-```
-
-## 代码结构
-
-```text
-tgod_sd/
-  env.py             UR5e 白杯搬运环境，环境奖励恒为 0
-  expert.py          单条专家示范加载、对齐与关系特征
-  networks.py        条件 actor、双 Q 和 MINE
-  replay_buffer.py   TGOD 回放池
-  agent.py           MINE 伪奖励与 SAC 更新
-  sinkhorn.py        数值稳定的熵正则最优传输距离
-  trajectory.py      候选生成、SD 匹配和保存
-  trainer.py         训练流程、日志和检查点
-```
-
-当前实现是仿真研究代码。白杯的抓取由真实接触或 1.5 cm 近接触容差自动触发，并在抓取期间进行运动学附着；抬起的杯子进入目标区域后自动释放。该确定性逻辑用于隔离轨迹规划问题，因为提供的 Menagerie 场景没有真实夹爪自由度。实体机器人执行前还必须增加夹爪控制、限位、碰撞监控和急停，不应直接发送这些 q-pos。
+加入 `--render --realtime` 可打开 MuJoCo 窗口。回放沿用已保存的关节角和杯轨迹；本项目仍是仿真研究实现。

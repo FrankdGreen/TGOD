@@ -16,6 +16,9 @@ from .expert import ExpertTrajectory, resample_trajectory
 from .sinkhorn import SinkhornResult, solve_sinkhorn
 
 
+SELECTION_RULE = "minimum_sinkhorn_divergence_all_candidates"
+
+
 @dataclass
 class CandidateTrajectory:
     observations: np.ndarray
@@ -223,12 +226,17 @@ def generate_and_match(
             f"converged={sinkhorn_result.converged}"
         )
 
-    eligible = list(range(candidate_count))
-    successful = [index for index, candidate in enumerate(candidates) if candidate.success]
-    filtered_to_success = bool(matching_config["prefer_successful"] and successful)
-    if filtered_to_success:
-        eligible = successful
-    selected_index = min(eligible, key=lambda index: scores[index])
+    # Paper selection uses the minimum SD over the entire candidate set.
+    # Task success is recorded for diagnosis only, never as an eligibility rule.
+    legacy_prefer_successful = bool(matching_config.get("prefer_successful", False))
+    if legacy_prefer_successful:
+        warnings.warn(
+            "Legacy matching.prefer_successful is ignored: selection uses minimum "
+            "Sinkhorn distance over all candidates.",
+            UserWarning,
+            stacklevel=2,
+        )
+    selected_index = min(range(candidate_count), key=lambda index: scores[index])
     selected_path = output_directory / "selected_trajectory.npz"
     candidates[selected_index].save(selected_path, scores[selected_index])
 
@@ -250,10 +258,12 @@ def generate_and_match(
         "selected_candidate": selected_index,
         "selected_sinkhorn_distance": scores[selected_index],
         "selected_success": candidates[selected_index].success,
-        "prefer_successful": bool(matching_config["prefer_successful"]),
+        "selection_rule": SELECTION_RULE,
+        "prefer_successful": False,
+        "legacy_prefer_successful_ignored": legacy_prefer_successful,
         "candidate_generation_seed": candidate_seed,
         "requested_skill_index": requested_skill,
-        "filtered_to_successful_candidates": filtered_to_success,
+        "filtered_to_successful_candidates": False,
         "candidates": records,
     }
     with (output_directory / "candidate_scores.json").open("w", encoding="utf-8") as handle:

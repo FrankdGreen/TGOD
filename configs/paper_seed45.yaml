@@ -1,22 +1,21 @@
-# 复现优先：保留两个等权 MINE 项、SAC 和全体候选的最小 SD 匹配。
-# 论文未公开网络和采样细节；示范关系特征仍是本项目的代理假设。
-# 2000 episodes 是项目训练预算，不能认作论文“约 2000 轮”的精确换算。
-seed: 0
+# 复现优先的新实验：从头训练，不接续采用额外奖励的旧 motion_only_seed45。
+# 两个等权 MINE 项 + SAC；示范关系特征仍是论文未公开细节的代理假设。
+# 沿用旧实验的环境/网络/优化器参数，避免同时引入更多工程调参。
+seed: 45
 device: auto
 
 paths:
   scene_xml: universal_robots_ur5e/scene.xml
   expert_dir: data/similar_expert
-  output_dir: outputs/ur5e_pick_place
+  output_dir: outputs/paper_seed45
 
 environment:
   max_episode_steps: 500
   frame_skip: 10
   kinematic_control: true
-  max_ee_step: 0.03
+  max_ee_step: 0.015
   ik_iterations: 30
   ik_damping: 0.05
-  # 场景没有夹爪自由度：末端触碰杯子时自动夹取，杯子进入目标区域后自动释放。
   grasp_radius: 0.015
   cup_tcp_offset: [0.0, 0.0, 0.105]
   blue_mat_center: [0.45, 0.35]
@@ -35,10 +34,9 @@ network:
 
 tgod:
   num_skills: 8
-  mine_learning_rate: 0.0001
+  mine_learning_rate: 0.00005
   state_mi_weight: 1.0
   demonstration_mi_weight: 1.0
-  # 不添加示范邻近/进度奖励，也不归一化或截断伪奖励。
   demonstration_support_weight: 0.0
   demonstration_progress_weight: 0.0
   pseudo_reward_clip: null
@@ -61,20 +59,21 @@ sac:
   gradient_clip: 10.0
 
 training:
+  # 固定项目预算；论文“约 2000 轮”没有给出与 episodes/环境步数的精确对应。
   episodes: 2000
   log_every_episodes: 10
   checkpoint_every_episodes: 10
   save_replay_buffer: true
-  match_after_training: true
+  match_after_training: false
 
 matching:
-  candidate_count: 50
+  candidate_count: 160
   deterministic_policy: false
   prefer_successful: false
   resample_points: 100
-  epsilon: 0.05
-  max_iterations: 500
-  tolerance: 1.0e-6
+  epsilon: 0.10
+  max_iterations: 2000
+  tolerance: 1.0e-5
   qpos_weight: 1.0
   tcp_weight: 2.0
   cup_weight: 2.0

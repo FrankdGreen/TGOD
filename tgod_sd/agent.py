@@ -8,12 +8,13 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from .expert import RELATION_PROXIMITY_INDEX
 from .networks import MINEEstimator, QNetwork, SquashedGaussianActor
 from .schema import OBSERVATION_SCALE
 
 
 class RunningMoments:
+    """Legacy checkpoint statistics, retained only for deserialization compatibility."""
+
     def __init__(self) -> None:
         self.mean = 0.0
         self.variance = 1.0
@@ -46,6 +47,8 @@ class RunningMoments:
 
 
 class TGODSACAgent:
+    """SAC with two equal MINE rewards; training entry points validate this objective."""
+
     def __init__(
         self,
         observation_dim: int,
@@ -72,6 +75,9 @@ class TGODSACAgent:
         self.target_q1 = copy.deepcopy(self.q1).to(self.device).requires_grad_(False)
         self.target_q2 = copy.deepcopy(self.q2).to(self.device).requires_grad_(False)
         self.state_mine = MINEEstimator(observation_dim, self.skill_dim, mine_hidden_dims, activation).to(self.device)
+        # The paper does not specify how to sample its demonstration variable
+        # from one fixed trajectory. Keep the existing relation-feature proxy
+        # as an explicit implementation assumption, not an extra reward term.
         self.demo_mine = MINEEstimator(relation_dim, self.skill_dim, mine_hidden_dims, activation).to(self.device)
 
         learning_rate = float(sac_config["learning_rate"])
@@ -92,12 +98,6 @@ class TGODSACAgent:
         self.target_entropy = -float(action_dim) if str(target_entropy).lower() == "auto" else float(target_entropy)
         self.gamma = float(sac_config["gamma"])
         self.tau = float(sac_config["tau"])
-        self.state_mi_weight = float(tgod_config["state_mi_weight"])
-        self.demonstration_mi_weight = float(tgod_config["demonstration_mi_weight"])
-        self.demonstration_support_weight = float(tgod_config["demonstration_support_weight"])
-        self.demonstration_progress_weight = float(tgod_config["demonstration_progress_weight"])
-        self.pseudo_reward_clip = float(tgod_config["pseudo_reward_clip"])
-        self.reward_normalization = bool(tgod_config["reward_normalization"])
         self.mine_gradient_clip = float(tgod_config["mine_gradient_clip"])
         self.gradient_clip = float(sac_config["gradient_clip"])
         self.reward_moments = RunningMoments()
@@ -109,8 +109,36 @@ class TGODSACAgent:
         return self.log_alpha.exp()
 
     def reset_reward_statistics(self) -> None:
-        """Reset normalization after the configured intrinsic reward changes."""
+        """Reset legacy metadata; reward statistics no longer affect training."""
         self.reward_moments = RunningMoments()
+
+    def optimizer_learning_rates(self) -> dict[str, list[float]]:
+        """Report the effective learning rate of every optimizer parameter group."""
+        return {
+            name: [float(group["lr"]) for group in optimizer.param_groups]
+            for name, optimizer in (
+                ("actor", self.actor_optimizer), ("q", self.q_optimizer),
+                ("mine", self.mine_optimizer), ("alpha", self.alpha_optimizer),
+            )
+        }
+
+    def apply_learning_rates(self, config: dict[str, Any]) -> dict[str, list[float]]:
+        """Apply an explicit resume configuration while retaining optimizer moments."""
+        learning_rates = {
+            "actor": float(config["sac"]["learning_rate"]),
+            "q": float(config["sac"]["learning_rate"]),
+            "mine": float(config["tgod"]["mine_learning_rate"]),
+            "alpha": float(config["sac"]["alpha_learning_rate"]),
+        }
+        if any(not math.isfinite(value) or value <= 0 for value in learning_rates.values()):
+            raise ValueError("Optimizer learning rates must be finite and positive.")
+        for name, optimizer in (
+            ("actor", self.actor_optimizer), ("q", self.q_optimizer),
+            ("mine", self.mine_optimizer), ("alpha", self.alpha_optimizer),
+        ):
+            for group in optimizer.param_groups:
+                group["lr"] = learning_rates[name]
+        return self.optimizer_learning_rates()
 
     def _tensor(self, values: np.ndarray) -> torch.Tensor:
         return torch.as_tensor(values, dtype=torch.float32, device=self.device)
@@ -131,12 +159,11 @@ class TGODSACAgent:
         action = self._tensor(batch["action"])
         skill = self._tensor(batch["skill"])
         relation = self._tensor(batch["relation"])
-        next_relation = self._tensor(batch["next_relation"])
         terminal = self._tensor(batch["terminal"])
 
         state_bound, _, _ = self.state_mine.dv_bound(observation, skill)
         demo_bound, _, _ = self.demo_mine.dv_bound(relation, skill)
-        mine_loss = -(self.state_mi_weight * state_bound + self.demonstration_mi_weight * demo_bound)
+        mine_loss = -(state_bound + demo_bound)
         self.mine_optimizer.zero_grad(set_to_none=True)
         mine_loss.backward()
         torch.nn.utils.clip_grad_norm_(
@@ -145,35 +172,13 @@ class TGODSACAgent:
         self.mine_optimizer.step()
 
         with torch.no_grad():
-            demonstration_support = torch.clamp(
-                relation[:, RELATION_PROXIMITY_INDEX : RELATION_PROXIMITY_INDEX + 1],
-                min=1e-6,
-                max=1.0,
+            # Use the two MINE terms with the coefficients of the paper's
+            # objective. Do not add proximity/progress guidance or transform
+            # this reward by running normalization or clipping.
+            pseudo_reward = (
+                self.state_mine.pointwise_reward(observation, skill)
+                + self.demo_mine.pointwise_reward(relation, skill)
             )
-            next_demonstration_support = torch.clamp(
-                next_relation[:, RELATION_PROXIMITY_INDEX : RELATION_PROXIMITY_INDEX + 1],
-                min=1e-6,
-                max=1.0,
-            )
-            support_reward = self.demonstration_support_weight * torch.log(demonstration_support)
-            # Potential-based dense guidance: reward actions that move the next
-            # state closer to the time-aligned expert state and penalize regress.
-            progress_reward = self.demonstration_progress_weight * (
-                self.gamma * torch.log(next_demonstration_support)
-                - torch.log(demonstration_support)
-            )
-            raw_reward = (
-                self.state_mi_weight * self.state_mine.pointwise_reward(observation, skill)
-                + self.demonstration_mi_weight * self.demo_mine.pointwise_reward(relation, skill)
-                + support_reward
-                + progress_reward
-            )
-            if self.reward_normalization:
-                self.reward_moments.update(raw_reward)
-                pseudo_reward = self.reward_moments.normalize(raw_reward)
-            else:
-                pseudo_reward = raw_reward
-            pseudo_reward = torch.clamp(pseudo_reward, -self.pseudo_reward_clip, self.pseudo_reward_clip)
 
             next_action, next_log_probability = self.actor(next_observation, skill)
             assert next_log_probability is not None
@@ -219,10 +224,8 @@ class TGODSACAgent:
             "mine_loss": float(mine_loss.item()),
             "state_mi_bound": float(state_bound.item()),
             "demonstration_mi_bound": float(demo_bound.item()),
-            "pseudo_reward_raw_mean": float(raw_reward.mean().item()),
+            "pseudo_reward_raw_mean": float(pseudo_reward.mean().item()),
             "pseudo_reward_mean": float(pseudo_reward.mean().item()),
-            "demonstration_support_mean": float(demonstration_support.mean().item()),
-            "demonstration_progress_reward_mean": float(progress_reward.mean().item()),
             "q_loss": float(q_loss.item()),
             "actor_loss": float(actor_loss.item()),
             "alpha_loss": float(alpha_loss.item()),
@@ -273,7 +276,8 @@ class TGODSACAgent:
         self.state_mine.load_state_dict(state["state_mine"])
         self.demo_mine.load_state_dict(state["demo_mine"])
         self.log_alpha.data.copy_(state["log_alpha"].to(self.device))
-        self.reward_moments.load_state_dict(state["reward_moments"])
+        if "reward_moments" in state:
+            self.reward_moments.load_state_dict(state["reward_moments"])
         self.update_count = int(state.get("update_count", 0))
         if load_optimizers:
             self.actor_optimizer.load_state_dict(state["actor_optimizer"])

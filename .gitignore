@@ -33,3 +33,4 @@ checkpoints/
 Thumbs.db
 
 selected_trajectory.npz
+tests/

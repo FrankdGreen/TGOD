@@ -165,6 +165,45 @@ def validate_config(config: Mapping[str, Any]) -> None:
             raise ValueError(f"network.{name} must be a non-empty list of positive integers.")
 
 
+def validate_reproduction_training(config: Mapping[str, Any]) -> None:
+    """Reject former experimental extensions while keeping old configs readable.
+
+    This checks the chosen training protocol; it does not certify every
+    implementation detail as specified by the paper (notably the demo-MI input).
+    """
+    validate_config(config)
+    tgod = config["tgod"]
+    training = config["training"]
+    violations: list[str] = []
+    for name in ("state_mi_weight", "demonstration_mi_weight"):
+        if isinstance(tgod[name], bool) or float(tgod[name]) != 1.0:
+            violations.append(f"tgod.{name} must be 1.0")
+    for name in ("demonstration_support_weight", "demonstration_progress_weight"):
+        if isinstance(tgod[name], bool) or float(tgod[name]) != 0.0:
+            violations.append(f"tgod.{name} must be 0.0")
+    if tgod.get("reward_normalization", False) is not False:
+        violations.append("tgod.reward_normalization must be false")
+    if tgod.get("pseudo_reward_clip") is not None:
+        violations.append("tgod.pseudo_reward_clip must be null")
+    if config["matching"].get("prefer_successful", False) is not False:
+        violations.append("matching.prefer_successful must be false (minimum SD over all candidates)")
+    for name in (
+        "evaluation_every_episodes", "early_stop_patience", "resume_replay_steps",
+        "reset_reward_statistics_on_resume",
+    ):
+        if training.get(name, 0) not in (0, False):
+            violations.append(f"training.{name} is no longer supported; remove it or disable it")
+    if training.get("save_replay_buffer", True) is not True:
+        violations.append("training.save_replay_buffer must be true for resumable latest checkpoints")
+    if violations:
+        raise ValueError(
+            "Reproduction-first training rejects this configuration:\n  - "
+            + "\n  - ".join(violations)
+            + "\nUse configs/paper_seed45.yaml for a fresh run. Historical configurations "
+            "remain readable for evaluation."
+        )
+
+
 def select_device(requested: str) -> str:
     import torch
 
